@@ -15,7 +15,8 @@ CLI for Whisper ASR powered by OpenVINO with CPU, GPU, and NPU support.
 
 ### Prerequisites
 
-- Python >= 3.10
+- [uv](https://docs.astral.sh/uv/) (Python package manager)
+- Python >= 3.10 (automatically managed by uv)
 - FFmpeg (for audio decoding)
 
 ### Install from source
@@ -25,31 +26,36 @@ CLI for Whisper ASR powered by OpenVINO with CPU, GPU, and NPU support.
 git clone https://github.com/r-da/WhisperOV
 cd WhisperOV
 
-# Install dependencies
-pip install .
-
-# Or with uv
+# Create virtual environment and install dependencies
 uv sync
+```
+
+### Activate the environment
+
+```bash
+uv run whisper-ov --help
 ```
 
 ### Install in development mode
 
 ```bash
-pip install -e ".[dev]"
+uv sync --all-extras
 ```
 
 ## Usage
 
+Run commands with `uv run` to automatically use the project's virtual environment:
+
 ### Transcribe an audio file
 
 ```bash
-whisper-ov transcribe <audio_file>
+uv run whisper-ov transcribe <audio_file>
 ```
 
 ### Available options
 
 ```bash
-whisper-ov transcribe audio.mp3 \
+uv run whisper-ov transcribe audio.mp3 \
   --model openai/whisper-large-v3-turbo \
   --device AUTO \
   --language it \
@@ -59,9 +65,9 @@ whisper-ov transcribe audio.mp3 \
 
 ### Commands
 
-- `whisper-ov transcribe <file>` — Transcribe an audio file
-- `whisper-ov devices` — Show available OpenVINO devices
-- `whisper-ov models` — List available Whisper models
+- `uv run whisper-ov transcribe <file>` — Transcribe an audio file
+- `uv run whisper-ov devices` — Show available OpenVINO devices
+- `uv run whisper-ov models` — List available Whisper models
 
 ### Output formats
 
