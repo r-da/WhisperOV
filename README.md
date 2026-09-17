@@ -9,7 +9,7 @@ CLI for Whisper ASR powered by OpenVINO with CPU, GPU, and NPU support.
 - Automatic model download from HuggingFace (pre-converted OpenVINO formats)
 - Multiple output formats: TXT, SRT, VTT
 - Command-line interface with rich output
-- Audio auto-detection for language
+- Automatic language detection
 
 ## Installation
 
