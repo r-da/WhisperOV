@@ -30,7 +30,7 @@ cd WhisperOV
 uv sync
 ```
 
-### Activate the environment
+### Running commands
 
 ```bash
 uv run whisper-ov --help
@@ -109,16 +109,6 @@ Models are automatically downloaded from the OpenVINO HuggingFace collection on 
 ├── pyproject.toml
 └── uv.lock
 ```
-
-## Requirements
-
-- Python >= 3.10
-- openvino >= 2024.3.0
-- openvino-genai >= 2024.3.0
-- av >= 13.0.0
-- typer >= 0.12.0
-- rich >= 13.0.0
-- huggingface-hub >= 0.26.0
 
 ## License
 
