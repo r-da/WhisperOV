@@ -179,7 +179,7 @@ def transcribe(
     for fmt, text in content.items():
         ext = extensions[fmt]
         out_path = out_dir / f"{base_name}{ext}"
-        out_path.write_text(text, encoding="utf-8")
+        out_path.write_text(text, encoding="utf-8", newline="\n")
         stderr_console.print(f"Output written to {out_path}", style="dim")
 
 
