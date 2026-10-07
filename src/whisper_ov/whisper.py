@@ -23,6 +23,9 @@ KNOWN_MODELS = [
 
 HF_TO_OV = {hf: ov for hf, ov, _, _ in KNOWN_MODELS}
 
+# Written into the model dir once snapshot_download has fetched every file
+COMPLETE_MARKER = ".whisper-ov-complete"
+
 
 def _get_ov_repo_id(hf_model_id: str) -> str:
     """Map a HuggingFace Whisper model ID to its OpenVINO pre-converted repo ID."""
@@ -49,17 +52,30 @@ def _download_model(hf_model_id: str, ov_repo_id: str, cache_dir: str) -> Path:
     name = hf_model_id.split("/")[-1]
     name = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
     model_dir = Path(cache_dir) / "models" / name
+    marker = model_dir / COMPLETE_MARKER
 
-    if model_dir.exists():
-        has_model = any(f.suffix in (".xml", ".onnx", ".bin") for f in model_dir.rglob("*"))
-        if has_model:
-            print(f"Using cached model: {model_dir}", file=sys.stderr)
-            return model_dir
+    # The marker is written only after a full download, so an interrupted one is never treated as cached
+    if marker.is_file():
+        print(f"Using cached model: {model_dir}", file=sys.stderr)
+        return model_dir
+
+    # Resolve the commit online first: without it, snapshot_download silently returns a partial
+    # local_dir when the Hub is unreachable
+    try:
+        commit = hf_hub.HfApi().model_info(ov_repo_id).sha
+    except Exception as e:
+        if model_dir.exists():
+            raise RuntimeError(
+                f"Cached model at {model_dir} is incomplete and {ov_repo_id} cannot be reached to finish it: {e}"
+            ) from e
+        raise
 
     model_dir.mkdir(parents=True, exist_ok=True)
 
+    # Files already downloaded are skipped, so this resumes an interrupted download
     print(f"Downloading {ov_repo_id} to {model_dir}...", file=sys.stderr)
-    hf_hub.snapshot_download(ov_repo_id, local_dir=str(model_dir))
+    hf_hub.snapshot_download(ov_repo_id, revision=commit, local_dir=str(model_dir))
+    marker.write_text(f"{ov_repo_id}@{commit}\n", encoding="utf-8")
     print(f"Model downloaded to {model_dir}", file=sys.stderr)
 
     return model_dir
