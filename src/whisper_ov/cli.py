@@ -189,7 +189,7 @@ def devices() -> None:
     try:
         import openvino as ov
     except ImportError:
-        console.print("[red]openvino not installed. Install with: pip install openvino openvino-genai[/red]")
+        console.print("[red]openvino not installed. Install dependencies with: uv sync[/red]")
         raise typer.Exit(1)
 
     core = ov.Core()
