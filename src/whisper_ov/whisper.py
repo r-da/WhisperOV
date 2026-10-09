@@ -97,6 +97,8 @@ def transcribe(
     device: str = "AUTO",
     language: str | None = None,
     cache_dir: str = "~/.cache/whisper-ov",
+    initial_prompt: str | None = None,
+    hotwords: str | None = None,
 ) -> dict:
     """Transcribe audio using OpenVINO WhisperPipeline.
 
@@ -106,6 +108,8 @@ def transcribe(
         device: OpenVINO device (CPU, GPU, NPU, AUTO).
         language: Language code (e.g. 'en', 'it', 'fr'). None for auto-detect.
         cache_dir: Directory for cached models.
+        initial_prompt: Text fed as the previous transcription to the first 30s window only.
+        hotwords: Text fed as the previous transcription to every 30s window.
 
     Returns:
         Dict with keys 'text' (str) and 'segments' (list of dicts with 'text', 'start', 'end').
@@ -129,6 +133,10 @@ def transcribe(
         if not (language.startswith("<|") and language.endswith("|>")):
             language = f"<|{language}|>"
         gen_kwargs["language"] = language
+    # Blank prompts are ignored: whitespace would still be fed to the decoder as "previous text"
+    for key, value in (("initial_prompt", initial_prompt), ("hotwords", hotwords)):
+        if value and value.strip():
+            gen_kwargs[key] = value.strip()
 
     # Run inference — audio must be a list of floats
     print("Transcribing...", file=sys.stderr)

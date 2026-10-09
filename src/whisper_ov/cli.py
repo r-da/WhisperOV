@@ -96,6 +96,16 @@ def transcribe(
         "--cache-dir",
         help="Directory for cached models",
     ),
+    initial_prompt: str | None = typer.Option(
+        None,
+        "--initial-prompt",
+        help="Text used as previous transcription for the first 30s window only (style, spelling).",
+    ),
+    hotwords: str | None = typer.Option(
+        None,
+        "--hotwords",
+        help="Text used as previous transcription for every 30s window (style, punctuation, names, terms).",
+    ),
     format: str = typer.Option(
         "all",
         "--format",
@@ -148,7 +158,15 @@ def transcribe(
     stderr_console.print(f"Transcribing on {device.upper()}...", style="green")
     try:
         t0 = time.perf_counter()
-        result = _transcribe(audio, model_id=model, device=device.upper(), language=language, cache_dir=cache_dir)
+        result = _transcribe(
+            audio,
+            model_id=model,
+            device=device.upper(),
+            language=language,
+            cache_dir=cache_dir,
+            initial_prompt=initial_prompt,
+            hotwords=hotwords,
+        )
         elapsed = time.perf_counter() - t0
     except Exception as e:
         stderr_console.print(f"[red]Transcription error: {e}[/red]")
