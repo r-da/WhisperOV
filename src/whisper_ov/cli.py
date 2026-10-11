@@ -82,7 +82,7 @@ def transcribe(
         "AUTO",
         "--device",
         "-d",
-        help="Inference device (CPU, GPU, NPU, AUTO)",
+        help="Inference device (CPU, GPU, NPU, AUTO). GPU means Intel GPUs only: NVIDIA/AMD GPUs are not supported",
         case_sensitive=False,
     ),
     language: str | None = typer.Option(
