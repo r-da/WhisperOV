@@ -6,22 +6,55 @@ from pathlib import Path
 
 import numpy as np
 
-# Map HuggingFace Whisper model IDs to OpenVINO pre-converted repos
-# Format: (hf_model_id, openvino_repo_id, display_name, approximate_size_gb)
+# Map HuggingFace Whisper model IDs to pre-converted repos for each backend
+# Format: (hf_model_id, openvino_repo_id, ct2_repo_id, display_name, approximate_size_gb)
+# ct2_repo_id is the CTranslate2 repo used by the CUDA backend: INT8 variants reuse the fp16 repo (CTranslate2
+# quantizes at load time) and INT4 has no CTranslate2 equivalent (None)
 KNOWN_MODELS = [
-    ("openai/whisper-tiny", "OpenVINO/whisper-tiny-fp16-ov", "tiny", 0.07),
-    ("openai/whisper-base", "OpenVINO/whisper-base-fp16-ov", "base", 0.14),
-    ("openai/whisper-small", "OpenVINO/whisper-small-fp16-ov", "small", 0.50),
-    ("openai/whisper-medium", "OpenVINO/whisper-medium-fp16-ov", "medium", 1.42),
-    ("openai/whisper-large-v3", "OpenVINO/whisper-large-v3-fp16-ov", "large-v3", 2.91),
-    ("openai/whisper-large-v3-int4", "OpenVINO/whisper-large-v3-int4-ov", "large-v3 (INT4)", 1.0),
-    ("openai/whisper-large-v3-int8", "OpenVINO/whisper-large-v3-int8-ov", "large-v3 (INT8)", 1.5),
-    ("openai/whisper-large-v3-turbo", "OpenVINO/whisper-large-v3-turbo-fp16-ov", "large-v3-turbo", 1.52),
-    ("openai/whisper-large-v3-turbo-int4", "OpenVINO/whisper-large-v3-turbo-int4-ov", "large-v3-turbo (INT4)", 0.75),
-    ("openai/whisper-large-v3-turbo-int8", "OpenVINO/whisper-large-v3-turbo-int8-ov", "large-v3-turbo (INT8)", 1.0),
+    ("openai/whisper-tiny", "OpenVINO/whisper-tiny-fp16-ov", "Systran/faster-whisper-tiny", "tiny", 0.07),
+    ("openai/whisper-base", "OpenVINO/whisper-base-fp16-ov", "Systran/faster-whisper-base", "base", 0.14),
+    ("openai/whisper-small", "OpenVINO/whisper-small-fp16-ov", "Systran/faster-whisper-small", "small", 0.50),
+    ("openai/whisper-medium", "OpenVINO/whisper-medium-fp16-ov", "Systran/faster-whisper-medium", "medium", 1.42),
+    (
+        "openai/whisper-large-v3",
+        "OpenVINO/whisper-large-v3-fp16-ov",
+        "Systran/faster-whisper-large-v3",
+        "large-v3",
+        2.91,
+    ),
+    ("openai/whisper-large-v3-int4", "OpenVINO/whisper-large-v3-int4-ov", None, "large-v3 (INT4)", 1.0),
+    (
+        "openai/whisper-large-v3-int8",
+        "OpenVINO/whisper-large-v3-int8-ov",
+        "Systran/faster-whisper-large-v3",
+        "large-v3 (INT8)",
+        1.5,
+    ),
+    (
+        "openai/whisper-large-v3-turbo",
+        "OpenVINO/whisper-large-v3-turbo-fp16-ov",
+        "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+        "large-v3-turbo",
+        1.52,
+    ),
+    (
+        "openai/whisper-large-v3-turbo-int4",
+        "OpenVINO/whisper-large-v3-turbo-int4-ov",
+        None,
+        "large-v3-turbo (INT4)",
+        0.75,
+    ),
+    (
+        "openai/whisper-large-v3-turbo-int8",
+        "OpenVINO/whisper-large-v3-turbo-int8-ov",
+        "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+        "large-v3-turbo (INT8)",
+        1.0,
+    ),
 ]
 
-HF_TO_OV = {hf: ov for hf, ov, _, _ in KNOWN_MODELS}
+HF_TO_OV = {hf: ov for hf, ov, _, _, _ in KNOWN_MODELS}
+HF_TO_CT2 = {hf: ct2 for hf, _, ct2, _, _ in KNOWN_MODELS}
 
 # Written into the model dir once snapshot_download has fetched every file
 COMPLETE_MARKER = ".whisper-ov-complete"
@@ -36,22 +69,25 @@ def _get_ov_repo_id(hf_model_id: str) -> str:
     return f"OpenVINO/{name}-fp16-ov"
 
 
-def _download_model(hf_model_id: str, ov_repo_id: str, cache_dir: str) -> Path:
-    """Download the OpenVINO pre-converted model from HuggingFace Hub.
+def _model_dir(cache_dir: str, subdir: str, name: str) -> Path:
+    """Return the cache directory for a model, with the name made filesystem-safe."""
+    name = name.split("/")[-1]
+    name = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+    return Path(cache_dir) / subdir / name
+
+
+def _download_model(repo_id: str, model_dir: Path) -> Path:
+    """Download a pre-converted model repo from HuggingFace Hub into model_dir.
 
     Args:
-        hf_model_id: Original HuggingFace model ID (for display).
-        ov_repo_id: OpenVINO pre-converted repo ID on HuggingFace.
-        cache_dir: Directory to cache the model.
+        repo_id: Pre-converted repo ID on HuggingFace.
+        model_dir: Local directory to download the model into.
 
     Returns:
         Path to the downloaded model directory.
     """
     import huggingface_hub as hf_hub
 
-    name = hf_model_id.split("/")[-1]
-    name = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
-    model_dir = Path(cache_dir) / "models" / name
     marker = model_dir / COMPLETE_MARKER
 
     # The marker is written only after a full download, so an interrupted one is never treated as cached
@@ -62,20 +98,20 @@ def _download_model(hf_model_id: str, ov_repo_id: str, cache_dir: str) -> Path:
     # Resolve the commit online first: without it, snapshot_download silently returns a partial
     # local_dir when the Hub is unreachable
     try:
-        commit = hf_hub.HfApi().model_info(ov_repo_id).sha
+        commit = hf_hub.HfApi().model_info(repo_id).sha
     except Exception as e:
         if model_dir.exists():
             raise RuntimeError(
-                f"Cached model at {model_dir} is incomplete and {ov_repo_id} cannot be reached to finish it: {e}"
+                f"Cached model at {model_dir} is incomplete and {repo_id} cannot be reached to finish it: {e}"
             ) from e
         raise
 
     model_dir.mkdir(parents=True, exist_ok=True)
 
     # Files already downloaded are skipped, so this resumes an interrupted download
-    print(f"Downloading {ov_repo_id} to {model_dir}...", file=sys.stderr)
-    hf_hub.snapshot_download(ov_repo_id, revision=commit, local_dir=str(model_dir))
-    marker.write_text(f"{ov_repo_id}@{commit}\n", encoding="utf-8")
+    print(f"Downloading {repo_id} to {model_dir}...", file=sys.stderr)
+    hf_hub.snapshot_download(repo_id, revision=commit, local_dir=str(model_dir))
+    marker.write_text(f"{repo_id}@{commit}\n", encoding="utf-8")
     print(f"Model downloaded to {model_dir}", file=sys.stderr)
 
     return model_dir
@@ -87,7 +123,7 @@ def _resolve_model_path(hf_model_id: str, cache_dir: str) -> str:
     Returns the path to the local model directory.
     """
     ov_repo_id = _get_ov_repo_id(hf_model_id)
-    model_dir = _download_model(hf_model_id, ov_repo_id, cache_dir)
+    model_dir = _download_model(ov_repo_id, _model_dir(cache_dir, "models", hf_model_id))
     return str(model_dir)
 
 
@@ -174,6 +210,7 @@ def list_models() -> list[dict]:
             "model_id": hf_id,
             "name": name,
             "size_gb": size_gb,
+            "cuda": ct2_repo_id is not None,
         }
-        for hf_id, _, name, size_gb in KNOWN_MODELS
+        for hf_id, _, ct2_repo_id, name, size_gb in KNOWN_MODELS
     ]

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "whisper-ov"
 version = "0.1.0"
-description = "CLI for Whisper ASR using OpenVINO with CPU/GPU/NPU support"
+description = "CLI for Whisper ASR using OpenVINO (CPU/Intel GPU/NPU) and faster-whisper (NVIDIA CUDA)"
 requires-python = ">=3.10"
 dependencies = [
     "openvino>=2024.3.0",
@@ -18,6 +18,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.4.0"]
+cuda = [
+    "faster-whisper>=1.2.1",
+    "nvidia-cublas-cu12>=12.9.2.10",
+    "nvidia-cudnn-cu12==9.*",
+]
 
 [project.scripts]
 whisper-ov = "whisper_ov.cli:main"

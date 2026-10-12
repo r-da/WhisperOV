@@ -1,12 +1,15 @@
 # whisper-ov
 
-CLI for Whisper ASR powered by OpenVINO with CPU, GPU, and NPU support.
+CLI for Whisper ASR powered by OpenVINO with CPU, Intel GPU, and NPU support, plus NVIDIA GPUs via CUDA
+(faster-whisper).
 
 ## Features
 
 - Transcribe audio files using Whisper models accelerated by OpenVINO
-- Support for CPU, GPU, and NPU inference devices
-- Automatic model download from HuggingFace (pre-converted OpenVINO formats)
+- Support for CPU, GPU (Intel), and NPU inference devices
+- Optional NVIDIA GPU support via CUDA ([faster-whisper](https://github.com/SYSTRAN/faster-whisper)), used
+  automatically when available
+- Automatic model download from HuggingFace (pre-converted OpenVINO and CTranslate2 formats)
 - Multiple output formats: TXT, SRT, VTT
 - Command-line interface with rich output
 - Automatic language detection
@@ -28,6 +31,26 @@ cd WhisperOV
 
 # Create virtual environment and install dependencies
 uv sync
+```
+
+### NVIDIA GPUs (CUDA)
+
+OpenVINO's `GPU` device only supports Intel GPUs. To run on an NVIDIA GPU, install the optional `cuda` extra, which
+adds faster-whisper (CTranslate2) and the CUDA 12 cuBLAS/cuDNN libraries (about 2.5 GB on disk):
+
+```bash
+uv sync --extra cuda
+```
+
+Requirements: an NVIDIA driver supporting CUDA 12 and a GPU supported by CUDA 12 (Maxwell / GTX 9xx or newer). The
+CUDA toolkit is not needed. On WSL2 the Windows NVIDIA driver is enough. Check that the GPU is detected with
+`uv run whisper-ov devices` (it shows up as `CUDA:0`).
+
+The libraries installed by the extra are loaded automatically. If CTranslate2 still can't find them (e.g. errors about
+`libcublas.so.12` or `libcudnn`), set `LD_LIBRARY_PATH` before running:
+
+```bash
+export LD_LIBRARY_PATH=$(uv run python -c 'import nvidia.cublas.lib as a, nvidia.cudnn.lib as b; print(*a.__path__, *b.__path__, sep=":")')
 ```
 
 ### Running commands
@@ -63,6 +86,17 @@ uv run whisper-ov transcribe audio.mp3 \
   --output-dir ./subtitles
 ```
 
+### Devices
+
+- `AUTO` (default) — NVIDIA GPU via CUDA when the `cuda` extra is installed and a GPU is detected, otherwise OpenVINO
+  `AUTO`. If loading or running the model on CUDA fails, it prints a warning and falls back to OpenVINO.
+- `CUDA`, `CUDA:<n>` — force the NVIDIA GPU (no fallback)
+- `CPU`, `GPU`, `NPU` — OpenVINO devices (`GPU` means Intel GPUs only)
+
+On CUDA, `--compute-type` selects the CTranslate2 precision. The default `auto` picks the fastest type supported by the
+GPU (float16 on recent cards, int8/float32 on older ones). The `-int8` model variants default to `int8_float16`. INT4
+variants are not available on CUDA and always run on OpenVINO.
+
 ### Improving punctuation and spelling
 
 Whisper imitates the style of the text it sees as the "previous transcription". You can pass a short sample text
@@ -90,7 +124,7 @@ it to one or two sentences.
 ### Commands
 
 - `uv run whisper-ov transcribe <file>` — Transcribe an audio file
-- `uv run whisper-ov devices` — Show available OpenVINO devices
+- `uv run whisper-ov devices` — Show available inference devices (OpenVINO and CUDA)
 - `uv run whisper-ov models` — List available Whisper models
 
 ### Output formats
@@ -104,20 +138,22 @@ Output can be sent to stdout with `-o -` (txt only).
 
 ## Supported Models
 
-| Model ID | Size (GB) |
-|---|---|
-| openai/whisper-tiny | 0.07 |
-| openai/whisper-base | 0.14 |
-| openai/whisper-small | 0.50 |
-| openai/whisper-medium | 1.42 |
-| openai/whisper-large-v3 | 2.91 |
-| openai/whisper-large-v3-int4 | 1.00 |
-| openai/whisper-large-v3-int8 | 1.50 |
-| openai/whisper-large-v3-turbo | 1.52 |
-| openai/whisper-large-v3-turbo-int4 | 0.75 |
-| openai/whisper-large-v3-turbo-int8 | 1.00 |
+| Model ID | Size (GB) | CUDA |
+|---|---|---|
+| openai/whisper-tiny | 0.07 | yes |
+| openai/whisper-base | 0.14 | yes |
+| openai/whisper-small | 0.50 | yes |
+| openai/whisper-medium | 1.42 | yes |
+| openai/whisper-large-v3 | 2.91 | yes |
+| openai/whisper-large-v3-int4 | 1.00 | no |
+| openai/whisper-large-v3-int8 | 1.50 | yes |
+| openai/whisper-large-v3-turbo | 1.52 | yes |
+| openai/whisper-large-v3-turbo-int4 | 0.75 | no |
+| openai/whisper-large-v3-turbo-int8 | 1.00 | yes |
 
-Models are automatically downloaded from the OpenVINO HuggingFace collection on first use and cached in `~/.cache/whisper-ov`.
+Models are automatically downloaded on first use: from the OpenVINO HuggingFace collection into
+`~/.cache/whisper-ov/models`, and for CUDA from the CTranslate2 conversions (Systran, mobiuslabsgmbh) into
+`~/.cache/whisper-ov/models-ct2`.
 
 ## Project Structure
 
@@ -127,7 +163,8 @@ Models are automatically downloaded from the OpenVINO HuggingFace collection on 
 │   └── whisper_ov/
 │       ├── __init__.py      # Package init, version
 │       ├── cli.py           # CLI entry point (Typer)
-│       ├── whisper.py       # OpenVINO WhisperPipeline wrapper
+│       ├── whisper.py       # OpenVINO WhisperPipeline wrapper, model table, downloads
+│       ├── whisper_ct2.py   # faster-whisper (CUDA) wrapper
 │       ├── audio.py         # Audio loading with PyAV
 │       └── formats.py       # SRT/VTT output format helpers
 ├── pyproject.toml

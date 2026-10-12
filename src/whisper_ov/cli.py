@@ -1,5 +1,6 @@
 """CLI for whisper-ov - Whisper ASR using OpenVINO."""
 
+import importlib.util
 import sys
 import time
 from pathlib import Path
@@ -8,6 +9,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from whisper_ov import whisper_ct2
 from whisper_ov.audio import load_audio
 from whisper_ov.formats import generate_srt, generate_vtt
 from whisper_ov.whisper import list_models
@@ -15,7 +17,7 @@ from whisper_ov.whisper import transcribe as _transcribe
 
 app = typer.Typer(
     name="whisper-ov",
-    help="Whisper ASR powered by OpenVINO — CPU, GPU, NPU",
+    help="Whisper ASR powered by OpenVINO (CPU, Intel GPU, NPU) and faster-whisper (NVIDIA CUDA)",
     add_completion=False,
     no_args_is_help=True,
 )
@@ -59,6 +61,30 @@ def _resolve_output_name(audio_path: Path, output: str | None, output_dir: str |
     return out_dir, name
 
 
+def _transcribe_with_backend(audio, device: str, model: str, compute_type: str, **kwargs) -> dict:
+    """Run on CUDA (faster-whisper) or OpenVINO depending on the device; AUTO prefers CUDA when available."""
+    device = device.upper()
+    cuda_index = whisper_ct2.parse_device(device)
+
+    if cuda_index is not None:
+        if importlib.util.find_spec("faster_whisper") is None:
+            raise RuntimeError("CUDA support is not installed. Install it with: uv sync --extra cuda")
+        stderr_console.print(f"Transcribing on CUDA:{cuda_index}...", style="green")
+        return whisper_ct2.transcribe(
+            audio, model_id=model, device_index=cuda_index, compute_type=compute_type, **kwargs
+        )
+
+    if device == "AUTO" and whisper_ct2.supports_model(model) and whisper_ct2.cuda_devices():
+        stderr_console.print("Transcribing on CUDA:0 (AUTO)...", style="green")
+        try:
+            return whisper_ct2.transcribe(audio, model_id=model, compute_type=compute_type, **kwargs)
+        except Exception as e:  # noqa: BLE001 - any CUDA failure (missing cuDNN, unsupported GPU) falls back
+            stderr_console.print(f"[yellow]CUDA transcription failed ({e}), falling back to OpenVINO[/yellow]")
+
+    stderr_console.print(f"Transcribing on {device}...", style="green")
+    return _transcribe(audio, model_id=model, device=device, **kwargs)
+
+
 @app.callback()
 def callback() -> None:
     """whisper-ov - Whisper ASR powered by OpenVINO."""
@@ -82,7 +108,8 @@ def transcribe(
         "AUTO",
         "--device",
         "-d",
-        help="Inference device (CPU, GPU, NPU, AUTO). GPU means Intel GPUs only: NVIDIA/AMD GPUs are not supported",
+        help="Inference device: CPU, GPU (Intel only), NPU, CUDA or CUDA:<n> (NVIDIA), "
+        "AUTO (CUDA if available, otherwise OpenVINO)",
         case_sensitive=False,
     ),
     language: str | None = typer.Option(
@@ -90,6 +117,11 @@ def transcribe(
         "--language",
         "-l",
         help="Language code (e.g. en, it, fr). Auto-detect if not specified.",
+    ),
+    compute_type: str = typer.Option(
+        "auto",
+        "--compute-type",
+        help="CTranslate2 compute type, CUDA only (auto, float16, int8_float16, int8, float32, ...)",
     ),
     cache_dir: str = typer.Option(
         "~/.cache/whisper-ov",
@@ -124,7 +156,7 @@ def transcribe(
         help="Directory for output files. Default: same as input file directory",
     ),
 ) -> None:
-    """Transcribe an audio file to text using Whisper + OpenVINO."""
+    """Transcribe an audio file to text using Whisper + OpenVINO or faster-whisper (CUDA)."""
     audio_path = Path(audio_file)
 
     # Resolve output paths
@@ -155,13 +187,13 @@ def transcribe(
     )
 
     # Transcribe with timing
-    stderr_console.print(f"Transcribing on {device.upper()}...", style="green")
     try:
         t0 = time.perf_counter()
-        result = _transcribe(
+        result = _transcribe_with_backend(
             audio,
-            model_id=model,
-            device=device.upper(),
+            device=device,
+            model=model,
+            compute_type=compute_type,
             language=language,
             cache_dir=cache_dir,
             initial_prompt=initial_prompt,
@@ -203,7 +235,7 @@ def transcribe(
 
 @app.command()
 def devices() -> None:
-    """Show available OpenVINO devices."""
+    """Show available inference devices (OpenVINO and CUDA)."""
     try:
         import openvino as ov
     except ImportError:
@@ -212,7 +244,7 @@ def devices() -> None:
 
     core = ov.Core()
 
-    table = Table(title="OpenVINO Devices")
+    table = Table(title="Inference Devices")
     table.add_column("Device", style="cyan")
     table.add_column("Full Name", style="white")
     table.add_column("Architecture", style="dim")
@@ -222,7 +254,14 @@ def devices() -> None:
         arch = core.get_property(device_name, "DEVICE_ARCHITECTURE")
         table.add_row(device_name, full_name, arch)
 
+    for cuda in whisper_ct2.cuda_devices():
+        compute_types = ", ".join(cuda["compute_types"])
+        table.add_row(f"CUDA:{cuda['index']}", "NVIDIA GPU (faster-whisper)", compute_types)
+
     console.print(table)
+
+    if importlib.util.find_spec("faster_whisper") is None:
+        stderr_console.print("CUDA support not installed (NVIDIA GPUs): uv sync --extra cuda", style="dim")
 
 
 @app.command()
@@ -234,9 +273,10 @@ def models() -> None:
     table.add_column("Model ID", style="cyan")
     table.add_column("Name", style="white")
     table.add_column("Size (GB)", style="dim", justify="right")
+    table.add_column("CUDA", justify="center")
 
     for entry in model_list:
-        table.add_row(entry["model_id"], entry["name"], f"{entry['size_gb']:.2f}")
+        table.add_row(entry["model_id"], entry["name"], f"{entry['size_gb']:.2f}", "yes" if entry["cuda"] else "no")
 
     console.print(table)
 
