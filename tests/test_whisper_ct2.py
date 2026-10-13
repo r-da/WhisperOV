@@ -174,6 +174,7 @@ def backends(monkeypatch):
     monkeypatch.setattr(whisper_ct2, "transcribe", fake_ct2)
     monkeypatch.setattr(whisper_ct2, "cuda_devices", lambda: state["cuda_devices"])
     monkeypatch.setattr(cli, "_transcribe", fake_ov)
+    monkeypatch.setattr(cli, "unsupported_gpu_reason", lambda device: None)
     monkeypatch.setattr(cli.importlib.util, "find_spec", lambda name: object())
     return calls, state
 
@@ -266,4 +267,12 @@ def test_explicit_cuda_unsupported_gpu(backends):
     state["cuda_devices"] = [_gpu(compute_capability=(5, 0), supported=False)]
     with pytest.raises(RuntimeError, match="compute capability 5.0"):
         _select("CUDA")
+    assert calls == []
+
+
+def test_unsupported_openvino_gpu_fails_early(backends, monkeypatch):
+    calls, _ = backends
+    monkeypatch.setattr(cli, "unsupported_gpu_reason", lambda device: "GTX 950M is not supported")
+    with pytest.raises(RuntimeError, match="GTX 950M"):
+        _select("GPU")
     assert calls == []

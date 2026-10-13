@@ -1,6 +1,7 @@
 """OpenVINO WhisperPipeline wrapper for speech-to-text."""
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -58,6 +59,10 @@ HF_TO_CT2 = {hf: ct2 for hf, _, ct2, _, _ in KNOWN_MODELS}
 
 # Written into the model dir once snapshot_download has fetched every file
 COMPLETE_MARKER = ".whisper-ov-complete"
+
+# PCI vendor IDs, as reported in the GPU plugin's DEVICE_ARCHITECTURE ("GPU: vendor=0x10de arch=v5.0.0")
+INTEL_VENDOR_ID = 0x8086
+NVIDIA_VENDOR_ID = 0x10DE
 
 
 def _get_ov_repo_id(hf_model_id: str) -> str:
@@ -125,6 +130,34 @@ def _resolve_model_path(hf_model_id: str, cache_dir: str) -> str:
     ov_repo_id = _get_ov_repo_id(hf_model_id)
     model_dir = _download_model(ov_repo_id, _model_dir(cache_dir, "models", hf_model_id))
     return str(model_dir)
+
+
+def unsupported_gpu_reason(device: str, core=None) -> str | None:
+    """Explain why an OpenVINO GPU device can't run Whisper, or None if it is fine or not a GPU.
+
+    The GPU plugin is OpenCL-based, so it also lists NVIDIA/AMD GPUs, but only Intel ones work: on an NVIDIA
+    GTX 950M compiling the model fails with "Could not find a suitable kernel for convert" (F16 -> F32).
+    """
+    if not device.upper().startswith("GPU"):
+        return None
+    if core is None:
+        import openvino as ov
+
+        core = ov.Core()
+    try:
+        arch = core.get_property(device, "DEVICE_ARCHITECTURE")
+        full_name = core.get_property(device, "FULL_DEVICE_NAME")
+    except RuntimeError:
+        # No such device: let OpenVINO report it
+        return None
+
+    match = re.search(r"vendor=(0x[0-9a-fA-F]+)", arch)
+    if not match or int(match.group(1), 16) == INTEL_VENDOR_ID:
+        return None
+    reason = f"{full_name} is not supported by OpenVINO's GPU plugin, which only works with Intel GPUs"
+    if int(match.group(1), 16) == NVIDIA_VENDOR_ID:
+        return f"{reason}: use -d CUDA (Pascal / GTX 10xx and later) or -d CPU"
+    return f"{reason}: use -d CPU"
 
 
 def transcribe(

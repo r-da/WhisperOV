@@ -35,8 +35,8 @@ uv sync
 
 ### NVIDIA GPUs (CUDA)
 
-OpenVINO's `GPU` device officially supports only Intel GPUs (its OpenCL backend may list NVIDIA GPUs too, but they
-are not supported). To run on an NVIDIA GPU, install the optional `cuda` extra, which
+OpenVINO's `GPU` device only works with Intel GPUs. Its OpenCL backend may list NVIDIA/AMD GPUs too:
+`whisper-ov devices` marks them as unsupported and `-d GPU` refuses them. To run on an NVIDIA GPU, install the optional `cuda` extra, which
 adds faster-whisper (CTranslate2) and the CUDA 12 cuBLAS/cuDNN libraries (about 2.5 GB on disk):
 
 ```bash

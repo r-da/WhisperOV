@@ -12,7 +12,7 @@ from rich.table import Table
 from whisper_ov import whisper_ct2
 from whisper_ov.audio import load_audio
 from whisper_ov.formats import generate_srt, generate_vtt
-from whisper_ov.whisper import list_models
+from whisper_ov.whisper import list_models, unsupported_gpu_reason
 from whisper_ov.whisper import transcribe as _transcribe
 
 app = typer.Typer(
@@ -99,6 +99,11 @@ def _transcribe_with_backend(audio, device: str, model: str, compute_type: str, 
             stderr_console.print(f"{whisper_ct2.unsupported_reason(cuda_devices[0])}, using OpenVINO", style="yellow")
         else:
             stderr_console.print("No CUDA device detected, using OpenVINO", style="yellow")
+
+    # Fail early instead of with an OpenVINO kernel compilation error
+    reason = unsupported_gpu_reason(device)
+    if reason:
+        raise RuntimeError(reason)
 
     stderr_console.print(f"Transcribing on {device}...", style="green")
     return _transcribe(audio, model_id=model, device=device, **kwargs)
@@ -268,9 +273,14 @@ def devices() -> None:
     table.add_column("Full Name", style="white")
     table.add_column("Architecture", style="dim")
 
+    unsupported = []
     for device_name in core.available_devices:
         full_name = core.get_property(device_name, "FULL_DEVICE_NAME")
         arch = core.get_property(device_name, "DEVICE_ARCHITECTURE")
+        reason = unsupported_gpu_reason(device_name, core)
+        if reason:
+            arch = f"{arch} (unsupported)"
+            unsupported.append(reason)
         table.add_row(device_name, full_name, arch)
 
     cuda_devices = whisper_ct2.cuda_devices()
@@ -292,6 +302,8 @@ def devices() -> None:
             "and CUDA_VISIBLE_DEVICES",
             style="yellow",
         )
+    for reason in unsupported:
+        stderr_console.print(reason, style="yellow")
     for cuda in cuda_devices:
         if not cuda["supported"]:
             stderr_console.print(whisper_ct2.unsupported_reason(cuda), style="yellow")
