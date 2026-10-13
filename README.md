@@ -6,7 +6,7 @@ CLI for Whisper ASR powered by OpenVINO with CPU, Intel GPU, and NPU support, pl
 ## Features
 
 - Transcribe audio files using Whisper models accelerated by OpenVINO
-- Support for CPU, GPU (Intel), and NPU inference devices
+- Support for CPU, GPU (officially Intel only), and NPU inference devices
 - Optional NVIDIA GPU support via CUDA ([faster-whisper](https://github.com/SYSTRAN/faster-whisper)), used
   automatically when available
 - Automatic model download from HuggingFace (pre-converted OpenVINO and CTranslate2 formats)
@@ -35,14 +35,17 @@ uv sync
 
 ### NVIDIA GPUs (CUDA)
 
-OpenVINO's `GPU` device only supports Intel GPUs. To run on an NVIDIA GPU, install the optional `cuda` extra, which
+OpenVINO's `GPU` device officially supports only Intel GPUs (its OpenCL backend may list NVIDIA GPUs too, but they
+are not supported). To run on an NVIDIA GPU, install the optional `cuda` extra, which
 adds faster-whisper (CTranslate2) and the CUDA 12 cuBLAS/cuDNN libraries (about 2.5 GB on disk):
 
 ```bash
 uv sync --extra cuda
 ```
 
-Requirements: an NVIDIA driver supporting CUDA 12 and a GPU supported by CUDA 12 (Maxwell / GTX 9xx or newer). The
+Requirements: an NVIDIA driver supporting CUDA 12 or newer and a GPU with compute capability 5.3 or newer, in practice
+Pascal (GTX 10xx) and later. The prebuilt CTranslate2 has no kernels for older GPUs: Maxwell cards such as the
+GTX 9xx, 950M or 750 Ti (compute capability 5.0/5.2) are detected but rejected, and `AUTO` uses OpenVINO. The
 CUDA toolkit is not needed. On WSL2 the Windows NVIDIA driver is enough. Check that the GPU is detected with
 `uv run whisper-ov devices` (it shows up as `CUDA:0`).
 
@@ -91,7 +94,7 @@ uv run whisper-ov transcribe audio.mp3 \
 - `AUTO` (default) — NVIDIA GPU via CUDA when the `cuda` extra is installed and a GPU is detected, otherwise OpenVINO
   `AUTO`. If loading or running the model on CUDA fails, it prints a warning and falls back to OpenVINO.
 - `CUDA`, `CUDA:<n>` — force the NVIDIA GPU (no fallback)
-- `CPU`, `GPU`, `NPU` — OpenVINO devices (`GPU` means Intel GPUs only)
+- `CPU`, `GPU`, `NPU` — OpenVINO devices (`GPU` is officially Intel GPUs only)
 
 On CUDA, `--compute-type` selects the CTranslate2 precision. The default `auto` picks the fastest type supported by the
 GPU (float16 on recent cards, int8/float32 on older ones). The `-int8` model variants default to `int8_float16`. INT4

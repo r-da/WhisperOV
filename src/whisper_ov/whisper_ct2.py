@@ -22,6 +22,14 @@ _CUDA_LIBS = (
 
 _cuda_libs_loaded = False
 
+# Oldest GPU the CTranslate2 wheels have kernels for: they ship cubins for sm_53..sm_86 plus PTX for sm_86, so
+# Maxwell GPUs with compute capability 5.0/5.2 (GTX 9xx, 950M, 750 Ti) fail at the first kernel launch
+MIN_COMPUTE_CAPABILITY = (5, 3)
+
+# CUdevice_attribute values from cuda.h
+_CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR = 75
+_CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR = 76
+
 
 def _preload_cuda_libs() -> None:
     """Load the pip-installed CUDA libraries, if any; a system-wide CUDA install is used otherwise."""
@@ -46,6 +54,60 @@ def _preload_cuda_libs() -> None:
                 break
 
 
+def _cuda_device_properties(count: int) -> list[tuple[str | None, tuple[int, int] | None]]:
+    """Return (name, compute capability) for each CUDA device, via the driver API; (None, None) when unknown."""
+    unknown = [(None, None)] * count
+    if not sys.platform.startswith("linux"):
+        return unknown
+    try:
+        libcuda = ctypes.CDLL("libcuda.so.1")
+    except OSError:
+        return unknown
+    if libcuda.cuInit(0) != 0:
+        return unknown
+
+    properties = []
+    for index in range(count):
+        device = ctypes.c_int()
+        if libcuda.cuDeviceGet(ctypes.byref(device), index) != 0:
+            properties.append((None, None))
+            continue
+        name = ctypes.create_string_buffer(256)
+        has_name = libcuda.cuDeviceGetName(name, len(name), device) == 0
+        major, minor = ctypes.c_int(), ctypes.c_int()
+        has_cc = (
+            libcuda.cuDeviceGetAttribute(ctypes.byref(major), _CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device)
+            == 0
+            and libcuda.cuDeviceGetAttribute(ctypes.byref(minor), _CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device)
+            == 0
+        )
+        properties.append(
+            (
+                name.value.decode(errors="replace") if has_name else None,
+                (major.value, minor.value) if has_cc else None,
+            )
+        )
+    return properties
+
+
+def describe_device(device: dict) -> str:
+    """Human-readable name of a cuda_devices() entry, e.g. 'NVIDIA GeForce GTX 950M (compute capability 5.0)'."""
+    name = device["name"] or f"CUDA:{device['index']}"
+    if device["compute_capability"] is None:
+        return name
+    major, minor = device["compute_capability"]
+    return f"{name} (compute capability {major}.{minor})"
+
+
+def unsupported_reason(device: dict) -> str:
+    """Explain why a cuda_devices() entry can't be used."""
+    major, minor = MIN_COMPUTE_CAPABILITY
+    return (
+        f"{describe_device(device)} is not supported by CTranslate2, which needs compute capability "
+        f"{major}.{minor} or newer (Pascal / GTX 10xx and later)"
+    )
+
+
 def parse_device(device: str) -> int | None:
     """Return the CUDA device index for 'CUDA' or 'CUDA:<n>', None for any other device."""
     name, _, index = device.upper().partition(":")
@@ -61,7 +123,8 @@ def parse_device(device: str) -> int | None:
 def cuda_devices() -> list[dict]:
     """Return the CUDA devices visible to CTranslate2, empty if the `cuda` extra is missing or no GPU is found.
 
-    Each entry has 'index' and 'compute_types' (sorted list of supported CTranslate2 compute types).
+    Each entry has 'index', 'name' and 'compute_capability' (None when unknown), 'supported' (whether the
+    CTranslate2 kernels can run on it) and 'compute_types' (sorted list of supported CTranslate2 compute types).
     """
     _preload_cuda_libs()
     try:
@@ -75,12 +138,21 @@ def cuda_devices() -> list[dict]:
         return []
 
     devices = []
-    for index in range(count):
+    for index, (name, compute_capability) in enumerate(_cuda_device_properties(count)):
         try:
             compute_types = sorted(ctranslate2.get_supported_compute_types("cuda", index))
         except RuntimeError:
             compute_types = []
-        devices.append({"index": index, "compute_types": compute_types})
+        devices.append(
+            {
+                "index": index,
+                "name": name,
+                "compute_capability": compute_capability,
+                # Unknown capability is assumed supported: a failure then surfaces at inference time
+                "supported": compute_capability is None or compute_capability >= MIN_COMPUTE_CAPABILITY,
+                "compute_types": compute_types,
+            }
+        )
     return devices
 
 

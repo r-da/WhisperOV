@@ -120,6 +120,41 @@ def test_parse_device_invalid():
         whisper_ct2.parse_device("CUDA:x")
 
 
+def _gpu(index=0, compute_capability=(8, 6), supported=True):
+    return {
+        "index": index,
+        "name": "NVIDIA Test GPU",
+        "compute_capability": compute_capability,
+        "supported": supported,
+        "compute_types": ["float16", "float32"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("compute_capability", "supported"),
+    [((5, 0), False), ((5, 2), False), ((5, 3), True), ((6, 1), True), ((12, 0), True), (None, True)],
+)
+def test_cuda_devices_support(monkeypatch, compute_capability, supported):
+    fake_ct2 = types.SimpleNamespace(
+        get_cuda_device_count=lambda: 1,
+        get_supported_compute_types=lambda device, index: {"float32"},
+    )
+    monkeypatch.setitem(sys.modules, "ctranslate2", fake_ct2)
+    monkeypatch.setattr(whisper_ct2, "_preload_cuda_libs", lambda: None)
+    monkeypatch.setattr(whisper_ct2, "_cuda_device_properties", lambda count: [("GTX", compute_capability)] * count)
+    (device,) = whisper_ct2.cuda_devices()
+    assert device["supported"] is supported
+    assert device["compute_types"] == ["float32"]
+
+
+def test_unsupported_reason():
+    reason = whisper_ct2.unsupported_reason(
+        {"index": 0, "name": "NVIDIA GeForce GTX 950M", "compute_capability": (5, 0)}
+    )
+    assert "NVIDIA GeForce GTX 950M (compute capability 5.0)" in reason
+    assert "5.3" in reason
+
+
 @pytest.fixture
 def backends(monkeypatch):
     """Record which backend _transcribe_with_backend picks; CUDA availability is controlled per test."""
@@ -135,7 +170,7 @@ def backends(monkeypatch):
         calls.append(("openvino", kwargs))
         return {"text": "openvino", "segments": []}
 
-    state = {"ct2_fails": False, "cuda_devices": [{"index": 0, "compute_types": ["float16"]}]}
+    state = {"ct2_fails": False, "cuda_devices": [_gpu()]}
     monkeypatch.setattr(whisper_ct2, "transcribe", fake_ct2)
     monkeypatch.setattr(whisper_ct2, "cuda_devices", lambda: state["cuda_devices"])
     monkeypatch.setattr(cli, "_transcribe", fake_ov)
@@ -184,7 +219,7 @@ def test_auto_without_extra_uses_openvino(backends, monkeypatch):
 def test_explicit_cuda_does_not_fall_back(backends):
     calls, state = backends
     state["ct2_fails"] = True
-    state["cuda_devices"] = [{"index": 0, "compute_types": []}, {"index": 1, "compute_types": []}]
+    state["cuda_devices"] = [_gpu(0), _gpu(1)]
     with pytest.raises(RuntimeError, match="cuDNN"):
         _select("CUDA:1")
     assert calls == [("cuda", calls[0][1])]
@@ -210,3 +245,25 @@ def test_openvino_devices_unchanged(backends):
     calls, _ = backends
     assert _select("gpu")["text"] == "openvino"
     assert calls[0][1]["device"] == "GPU"
+
+
+def test_auto_skips_unsupported_gpu(backends):
+    calls, state = backends
+    state["cuda_devices"] = [_gpu(compute_capability=(5, 0), supported=False)]
+    assert _select("AUTO")["text"] == "openvino"
+    assert [name for name, _ in calls] == ["openvino"]
+
+
+def test_auto_uses_first_supported_gpu(backends):
+    calls, state = backends
+    state["cuda_devices"] = [_gpu(0, (5, 0), supported=False), _gpu(1)]
+    assert _select("AUTO")["text"] == "cuda"
+    assert calls[0][1]["device_index"] == 1
+
+
+def test_explicit_cuda_unsupported_gpu(backends):
+    calls, state = backends
+    state["cuda_devices"] = [_gpu(compute_capability=(5, 0), supported=False)]
+    with pytest.raises(RuntimeError, match="compute capability 5.0"):
+        _select("CUDA")
+    assert calls == []
