@@ -1,10 +1,12 @@
 """Tests for the faster-whisper (CUDA) backend and the backend selection (faster_whisper and openvino are faked)."""
 
+import io
 import sys
 import types
 
 import numpy as np
 import pytest
+from rich.console import Console
 
 from whisper_ov import cli, whisper_ct2
 
@@ -155,6 +157,24 @@ def test_unsupported_reason():
     assert "5.3" in reason
 
 
+@pytest.mark.parametrize(
+    ("compute_types", "supported", "warns"),
+    [
+        (["float32", "int8", "int8_float32"], True, True),
+        (["float16", "float32", "int8_float16"], True, False),
+        ([], True, False),
+        (["float32"], False, False),
+    ],
+)
+def test_no_fp16_reason(compute_types, supported, warns):
+    gpu = {**_gpu(compute_capability=(6, 1), supported=supported), "compute_types": compute_types}
+    reason = whisper_ct2.no_fp16_reason(gpu)
+    assert (reason is not None) is warns
+    if warns:
+        assert "6.1" in reason
+        assert "-int8" in reason
+
+
 @pytest.fixture
 def backends(monkeypatch):
     """Record which backend _transcribe_with_backend picks; CUDA availability is controlled per test."""
@@ -276,3 +296,20 @@ def test_unsupported_openvino_gpu_fails_early(backends, monkeypatch):
     with pytest.raises(RuntimeError, match="GTX 950M"):
         _select("GPU")
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("model", "device", "warns"),
+    [
+        ("openai/whisper-tiny", "CUDA", True),
+        ("openai/whisper-tiny", "AUTO", True),
+        ("openai/whisper-large-v3-int8", "CUDA", False),
+    ],
+)
+def test_pascal_without_fp16_warns(backends, monkeypatch, model, device, warns):
+    _, state = backends
+    output = io.StringIO()
+    monkeypatch.setattr(cli, "stderr_console", Console(file=output, width=500))
+    state["cuda_devices"] = [{**_gpu(compute_capability=(6, 1)), "compute_types": ["float32", "int8"]}]
+    _select(device, model)
+    assert ("has no float16 support" in output.getvalue()) is warns

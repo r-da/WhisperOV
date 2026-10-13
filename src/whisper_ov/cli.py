@@ -61,6 +61,14 @@ def _resolve_output_name(audio_path: Path, output: str | None, output_dir: str |
     return out_dir, name
 
 
+def _warn_no_fp16(cuda: dict, model: str, compute_type: str) -> None:
+    """Warn that fp16 models on a GPU without float16 (Pascal GTX 10xx) fall back to int8/float32."""
+    if compute_type == "auto" and not model.endswith("-int8"):
+        reason = whisper_ct2.no_fp16_reason(cuda)
+        if reason:
+            stderr_console.print(reason, style="yellow")
+
+
 def _transcribe_with_backend(audio, device: str, model: str, compute_type: str, **kwargs) -> dict:
     """Run on CUDA (faster-whisper) or OpenVINO depending on the device; AUTO prefers CUDA when available."""
     device = device.upper()
@@ -78,6 +86,7 @@ def _transcribe_with_backend(audio, device: str, model: str, compute_type: str, 
             )
         if not cuda_devices[cuda_index]["supported"]:
             raise RuntimeError(whisper_ct2.unsupported_reason(cuda_devices[cuda_index]))
+        _warn_no_fp16(cuda_devices[cuda_index], model, compute_type)
         stderr_console.print(f"Transcribing on CUDA:{cuda_index}...", style="green")
         return whisper_ct2.transcribe(
             audio, model_id=model, device_index=cuda_index, compute_type=compute_type, **kwargs
@@ -88,6 +97,7 @@ def _transcribe_with_backend(audio, device: str, model: str, compute_type: str, 
         usable = [d for d in cuda_devices if d["supported"]]
         if usable:
             cuda = usable[0]
+            _warn_no_fp16(cuda, model, compute_type)
             stderr_console.print(f"Transcribing on CUDA:{cuda['index']} (AUTO)...", style="green")
             try:
                 return whisper_ct2.transcribe(
@@ -307,6 +317,8 @@ def devices() -> None:
     for cuda in cuda_devices:
         if not cuda["supported"]:
             stderr_console.print(whisper_ct2.unsupported_reason(cuda), style="yellow")
+        elif reason := whisper_ct2.no_fp16_reason(cuda):
+            stderr_console.print(reason, style="yellow")
 
 
 @app.command()

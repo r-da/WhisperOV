@@ -108,6 +108,17 @@ def unsupported_reason(device: dict) -> str:
     )
 
 
+def no_fp16_reason(device: dict) -> str | None:
+    """Warn when a supported GPU lacks float16 (e.g. Pascal GTX 10xx, compute capability 6.1), None otherwise."""
+    if not device["supported"] or not device["compute_types"] or "float16" in device["compute_types"]:
+        return None
+    return (
+        f"{describe_device(device)} has no float16 support: with --compute-type auto fp16 models run as "
+        "int8/float32, which is slower and may need more VRAM. Prefer an -int8 model "
+        "(e.g. openai/whisper-large-v3-int8) or --compute-type int8"
+    )
+
+
 def parse_device(device: str) -> int | None:
     """Return the CUDA device index for 'CUDA' or 'CUDA:<n>', None for any other device."""
     name, _, index = device.upper().partition(":")

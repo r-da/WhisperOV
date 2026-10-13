@@ -100,6 +100,10 @@ On CUDA, `--compute-type` selects the CTranslate2 precision. The default `auto` 
 GPU (float16 on recent cards, int8/float32 on older ones). The `-int8` model variants default to `int8_float16`. INT4
 variants are not available on CUDA and always run on OpenVINO.
 
+Pascal GPUs with compute capability 6.1 (GTX 10xx) have no usable float16 in CTranslate2: with `auto` the fp16 models
+run as int8/float32, which is slower and uses more VRAM (e.g. `large` may not fit in 4 GB). `whisper-ov devices` and
+`transcribe` print a warning in that case; prefer the `-int8` model variants or `--compute-type int8`.
+
 ### Improving punctuation and spelling
 
 Whisper imitates the style of the text it sees as the "previous transcription". You can pass a short sample text
