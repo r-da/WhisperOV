@@ -69,17 +69,27 @@ def _transcribe_with_backend(audio, device: str, model: str, compute_type: str, 
     if cuda_index is not None:
         if importlib.util.find_spec("faster_whisper") is None:
             raise RuntimeError("CUDA support is not installed. Install it with: uv sync --extra cuda")
+        # Without this check a missing device only surfaces mid-inference as "invalid device ordinal"
+        found = len(whisper_ct2.cuda_devices())
+        if cuda_index >= found:
+            raise RuntimeError(
+                f"CUDA:{cuda_index} not found, CTranslate2 sees {found} CUDA device(s). "
+                "Check the NVIDIA driver (nvidia-smi) and CUDA_VISIBLE_DEVICES"
+            )
         stderr_console.print(f"Transcribing on CUDA:{cuda_index}...", style="green")
         return whisper_ct2.transcribe(
             audio, model_id=model, device_index=cuda_index, compute_type=compute_type, **kwargs
         )
 
-    if device == "AUTO" and whisper_ct2.supports_model(model) and whisper_ct2.cuda_devices():
-        stderr_console.print("Transcribing on CUDA:0 (AUTO)...", style="green")
-        try:
-            return whisper_ct2.transcribe(audio, model_id=model, compute_type=compute_type, **kwargs)
-        except Exception as e:  # noqa: BLE001 - any CUDA failure (missing cuDNN, unsupported GPU) falls back
-            stderr_console.print(f"[yellow]CUDA transcription failed ({e}), falling back to OpenVINO[/yellow]")
+    if device == "AUTO" and whisper_ct2.supports_model(model) and importlib.util.find_spec("faster_whisper"):
+        if whisper_ct2.cuda_devices():
+            stderr_console.print("Transcribing on CUDA:0 (AUTO)...", style="green")
+            try:
+                return whisper_ct2.transcribe(audio, model_id=model, compute_type=compute_type, **kwargs)
+            except Exception as e:  # noqa: BLE001 - any CUDA failure (missing cuDNN, unsupported GPU) falls back
+                stderr_console.print(f"[yellow]CUDA transcription failed ({e}), falling back to OpenVINO[/yellow]")
+        else:
+            stderr_console.print("No CUDA device detected, using OpenVINO", style="yellow")
 
     stderr_console.print(f"Transcribing on {device}...", style="green")
     return _transcribe(audio, model_id=model, device=device, **kwargs)
@@ -254,7 +264,8 @@ def devices() -> None:
         arch = core.get_property(device_name, "DEVICE_ARCHITECTURE")
         table.add_row(device_name, full_name, arch)
 
-    for cuda in whisper_ct2.cuda_devices():
+    cuda_devices = whisper_ct2.cuda_devices()
+    for cuda in cuda_devices:
         compute_types = ", ".join(cuda["compute_types"])
         table.add_row(f"CUDA:{cuda['index']}", "NVIDIA GPU (faster-whisper)", compute_types)
 
@@ -262,6 +273,12 @@ def devices() -> None:
 
     if importlib.util.find_spec("faster_whisper") is None:
         stderr_console.print("CUDA support not installed (NVIDIA GPUs): uv sync --extra cuda", style="dim")
+    elif not cuda_devices:
+        stderr_console.print(
+            "CUDA support installed but no CUDA device detected: check the NVIDIA driver (nvidia-smi) "
+            "and CUDA_VISIBLE_DEVICES",
+            style="yellow",
+        )
 
 
 @app.command()

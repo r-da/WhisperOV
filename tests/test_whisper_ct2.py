@@ -174,13 +174,30 @@ def test_auto_falls_back_when_cuda_fails(backends):
     assert [name for name, _ in calls] == ["cuda", "openvino"]
 
 
+def test_auto_without_extra_uses_openvino(backends, monkeypatch):
+    calls, _ = backends
+    monkeypatch.setattr(cli.importlib.util, "find_spec", lambda name: None)
+    assert _select("AUTO")["text"] == "openvino"
+    assert [name for name, _ in calls] == ["openvino"]
+
+
 def test_explicit_cuda_does_not_fall_back(backends):
     calls, state = backends
     state["ct2_fails"] = True
+    state["cuda_devices"] = [{"index": 0, "compute_types": []}, {"index": 1, "compute_types": []}]
     with pytest.raises(RuntimeError, match="cuDNN"):
         _select("CUDA:1")
     assert calls == [("cuda", calls[0][1])]
     assert calls[0][1]["device_index"] == 1
+
+
+@pytest.mark.parametrize(("device", "visible"), [("CUDA", 0), ("CUDA:1", 1)])
+def test_explicit_cuda_device_not_found(backends, device, visible):
+    calls, state = backends
+    state["cuda_devices"] = state["cuda_devices"][:visible]
+    with pytest.raises(RuntimeError, match=f"sees {visible} CUDA device"):
+        _select(device)
+    assert calls == []
 
 
 def test_explicit_cuda_without_extra(backends, monkeypatch):
