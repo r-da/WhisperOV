@@ -1,6 +1,7 @@
 """CLI for whisper-ov - Whisper ASR using OpenVINO."""
 
 import importlib.util
+import os
 import sys
 import time
 from pathlib import Path
@@ -340,7 +341,23 @@ def models() -> None:
 
 def main() -> None:
     """Entry point for the whisper-ov CLI."""
-    app()
+    if sys.platform != "win32":
+        app()
+        return
+    # On Windows the OpenVINO GPU plugin / Intel OpenCL driver can deadlock while its DLLs unload at interpreter
+    # shutdown, after all output is written: flush and exit without running the native teardown
+    try:
+        app()
+        code = 0
+    except SystemExit as e:
+        if e.code is None or isinstance(e.code, int):
+            code = e.code or 0
+        else:
+            print(e.code, file=sys.stderr)
+            code = 1
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)
 
 
 if __name__ == "__main__":
