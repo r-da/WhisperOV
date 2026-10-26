@@ -339,13 +339,31 @@ def models() -> None:
     console.print(table)
 
 
+def _terminate_process(code: int) -> None:
+    """End the current Windows process without notifying the loaded DLLs.
+
+    os._exit is not enough: the CRT's _exit goes through ExitProcess, which still calls every DLL's
+    DllMain(DLL_PROCESS_DETACH) after killing the other threads, and that is where the GPU driver hangs.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    kernel32.TerminateProcess.restype = wintypes.BOOL
+    kernel32.TerminateProcess(kernel32.GetCurrentProcess(), code)
+    # Only reached if TerminateProcess failed
+    os._exit(code)
+
+
 def main() -> None:
     """Entry point for the whisper-ov CLI."""
     if sys.platform != "win32":
         app()
         return
-    # On Windows the OpenVINO GPU plugin / Intel OpenCL driver can deadlock while its DLLs unload at interpreter
-    # shutdown, after all output is written: flush and exit without running the native teardown
+    # On Windows the OpenVINO GPU plugin / Intel OpenCL driver can deadlock while its DLLs unload at process exit,
+    # after all output is written: flush and terminate without running the native teardown
     try:
         app()
         code = 0
@@ -357,7 +375,7 @@ def main() -> None:
             code = 1
     sys.stdout.flush()
     sys.stderr.flush()
-    os._exit(code)
+    _terminate_process(code)
 
 
 if __name__ == "__main__":

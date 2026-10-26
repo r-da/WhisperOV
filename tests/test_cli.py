@@ -1,4 +1,4 @@
-"""Tests for the cli.main entry point (os._exit is faked)."""
+"""Tests for the cli.main entry point (the Windows process termination is faked)."""
 
 import pytest
 
@@ -17,7 +17,7 @@ def exit_codes(monkeypatch):
         codes.append(code)
         raise _Exited
 
-    monkeypatch.setattr(cli.os, "_exit", fake_exit)
+    monkeypatch.setattr(cli, "_terminate_process", fake_exit)
     return codes
 
 
